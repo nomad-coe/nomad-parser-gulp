@@ -4,6 +4,8 @@ import sys
 import setup_paths
 
 import numpy as np
+from ase import Atoms
+from ase.spacegroup import crystal
 #from ase.data import chemical_symbols
 
 from nomadcore.simple_parser import mainFunction, SimpleMatcher as SM
@@ -23,6 +25,47 @@ metaInfoEnv, warnings = loadJsonFile(filePath=metaInfoPath,
 
 parser_info = {'name': 'gulp-parser', 'version': '1.0'}
 
+#TODO
+#----
+
+#OK    "program_name",
+#    "atom_labels",
+#    "atom_positions",
+#OK    "program_version",
+#    "energy_total",
+#    "simulation_cell",
+#    "configuration_periodic_dimensions"
+
+#    'section_system',
+#    'atom_labels',
+#    'simulation_cell',
+#    'section_method',
+#    'configuration_periodic_dimensions',
+#    'atom_positions',
+#    'section_frame_sequence',
+#    'section_sampling_method',
+#    'single_configuration_to_calculation_method_ref',
+#    'single_configuration_calculation_to_system_ref',
+#    'atom_forces_raw',
+#    'frame_sequence_local_frames_ref',
+#    'frame_sequence_to_sampling_ref',
+
+#DFT-only
+#    'XC_functional_name',
+#    'smearing_kind',
+#    'smearing_width'
+#    'eigenvalues_kpoints',
+#    'eigenvalues_values',
+#    'eigenvalues_occupation',
+#    'band_k_points',
+#    'band_energies',
+#    'band_segm_start_end',
+#    'band_segm_labels',
+#    'dos_energies',
+#    'dos_values',
+#    'section_XC_functionals',
+#    'program_basis_set_type',
+
 
 def errprint(func):
     def wrapper(backend, lines):
@@ -41,7 +84,7 @@ def tokenize(lines):
 
 
 # XXXX copied from Siesta parser
-def ArraySM(header, row, build, **kwargs):
+def ArraySM(header, row, build, stop=r'', **kwargs):
     class LineBuf:
         def __init__(self):
             self.lines = []
@@ -60,10 +103,10 @@ def ArraySM(header, row, build, **kwargs):
             required=True,
             subFlags=SM.SubFlags.Sequenced,
             subMatchers=[
-                SM(row, name='array', repeats=True,
+                SM('(%s)' % row, name='array', repeats=True,
                    forwardMatch=True,
                    adHoc=linebuf.addrow, required=True),
-                SM(r'', endReStr='', adHoc=linebuf._build_array, name='endarray',
+                SM(stop, endReStr='', adHoc=linebuf._build_array, name='endarray',
                    forwardMatch=True)
             ],
             **kwargs)
@@ -123,24 +166,61 @@ class GulpContext(object):
                          storage=self.data)
 
     def onClose_section_system(self, backend, gindex, section):
-        group = section['x_gulp_patterson_group']
-        # group may be none ---- no spacegroup
-        #sdkfjsdkfj
-        cellpar = [section['x_gulp_cell_a'],
-                   section['x_gulp_cell_b'],
-                   section['x_gulp_cell_c'],
-                   section['x_gulp_cell_alpha'],
-                   section['x_gulp_cell_beta'],
-                   section['x_gulp_cell_gamma']]
-        for x in cellpar:
-            assert len(x) == 1
-        from ase.spacegroup import crystal
-        num = get_spacegroup_number(section['x_gulp_space_group'][0])
-        atoms = crystal(self.chem_symbols_asymm_unit,
-                        basis=self.frac_coords_asymm_unit,
-                        spacegroup=num,
-                        cellpar=[x[0] for x in cellpar])
-                        #cell=self.data['cell']
+        data = self.data
+        sym = data['chem_symbols_asymm_unit']
+        sym = [s.rstrip('1234567890') for s in sym]
+        spos = data['frac_coords_asymm_unit']
+
+        spacegroup = section['x_gulp_space_group']
+
+        if spacegroup is None:
+            print(list(self.data.keys()))
+            npbc = section['x_gulp_pbc'][0]
+            pbc = np.zeros(3, bool)
+            pbc[:npbc] = True
+
+            if npbc == 0:
+                cell3d = np.identity(3)
+            else:
+                cell = data['cell']
+                assert npbc in [0, 1, 2, 3]
+                assert cell.shape == (npbc, 3)
+                cell3d = np.identity(3)
+                cell3d[:npbc, :] = cell
+
+            print(cell3d.shape)
+            print(cell3d)
+            print(spos.shape)
+            atoms = Atoms(sym, cell=cell3d, scaled_positions=spos, pbc=pbc)
+            assert sum(atoms.pbc) == npbc
+        else:
+            group = section['x_gulp_patterson_group']
+            # group may be none ---- no spacegroup
+            #sdkfjsdkfj
+            cellpar = [section['x_gulp_cell_a'],
+                       section['x_gulp_cell_b'],
+                       section['x_gulp_cell_c'],
+                       section['x_gulp_cell_alpha'],
+                       section['x_gulp_cell_beta'],
+                       section['x_gulp_cell_gamma']]
+            for x in cellpar:
+                assert len(x) == 1
+            num = get_spacegroup_number(spacegroup[0])
+            atoms = crystal(sym,
+                            basis=spos,
+                            spacegroup=num,
+                            cellpar=[x[0] for x in cellpar])
+            assert section['x_gulp_pbc'][0] == 3
+
+        sym = np.array(atoms.get_chemical_symbols())
+        backend.addArrayValues('atom_labels', sym)
+        backend.addArrayValues('configuration_periodic_dimensions',
+                               np.array(atoms.pbc))
+        backend.addValue('number_of_atoms', len(atoms))
+        backend.addArrayValues('simulation_cell',
+                               convert_unit(atoms.cell, 'angstrom'))
+        backend.addArrayValues('atom_positions',
+                               convert_unit(atoms.positions, 'angstrom'))
 
         #from ase.visualize import view
         #view(atoms)
@@ -156,10 +236,11 @@ class GulpContext(object):
             assert len(pos) == 3
             positions.append(pos)
             symbols.append(sym)
-        positions = np.array(positions)
+        positions = np.array(positions).reshape(-1, 3)
         symbols = np.array(symbols)
-        self.frac_coords_asymm_unit = positions
-        self.chem_symbols_asymm_unit = symbols
+        self.data['frac_coords_asymm_unit' ] = positions
+        self.data['chem_symbols_asymm_unit'] = symbols
+        #self.frac_coords_asymm_unit = positions
         #backend.addArrayValues('x_gulp_atomic_basis_symbols', symbols)
         #backend.addArrayValues('x_gulp_atomic_basis_positions', positions)
 
@@ -174,6 +255,8 @@ infoFileDescription = SM(
     subMatchers=[
         SM(r'\*\s*Version\s*=\s*(?P<program_version>\S+)',
            name='version'),
+        SM(r'\s*Dimensionality\s*=\s*(?P<x_gulp_pbc>\d+)',
+           name='pbc'),
         SM(r'\s*Symmetry\s*:',
            name='symm-header',
            subMatchers=[
@@ -182,9 +265,19 @@ infoFileDescription = SM(
                SM(r'\s*Patterson group\s*:\s*(?P<x_gulp_patterson_group>.+?)\s*$',
                   name='patterson'),
            ]),
-        SM(r'\s*Cartesian lattice vectors \(Angstroms\) :',
+        SM(r'\s*(Cartesian lattice|Surface Cartesian|Polymer Cartesian) vectors? \(Angstroms\) :',
            name='lattice-header',
+           #subFlags=SM.SubFlags.Sequenced,
            subMatchers=[
+               #SM(r'-+', name='bar'),
+               #SM(r'\s*No\.\s*Atomic', name='header1'),
+               #SM(r'\s*Label', name='header2'),
+               #SM(r'-+', name='bar'),
+               #SM(r'\s*Region',
+               #   name='region',
+               #   subMatchers=[
+               #       SM(r'', name='bar')
+               #   ]),
                ArraySM(r'',
                        r'\s*\S+\s*\S+\s*\S+',
                        context.save_array('cell'))
@@ -203,16 +296,31 @@ infoFileDescription = SM(
                SM(r'\s*b =\s*(?P<x_gulp_cell_b>\S+)\s*beta\s*=\s*(?P<x_gulp_cell_beta>\S+)'),
                SM(r'\s*c =\s*(?P<x_gulp_cell_c>\S+)\s*gamma\s*=\s*(?P<x_gulp_cell_gamma>\S+)'),
            ]),
-        SM(r'\s*Fractional coordinates of asymmetric unit\s*:',
+        SM(r'\s*(Fractional|Cartesian|Mixed fractional/Cartesian) coordinates of (asymmetric unit|surface|polymer|cluster|)\s*:',
+            #r'\s*(Fractional coordinates of asymmetric unit'
+           #r'|Mixed fractional/Cartesian coordinates of (surface|polymer)'
+           #r'|Cartesian coordinates of cluster)\s*:',
            subFlags=SM.SubFlags.Sequenced,
            name='frac-coords',
            subMatchers=[
-               SM(r'------------', name='bar'),
-               ArraySM(r'------------',
+               SM(r'-+', name='bar'),
+               # We need to skip the 'Region 1' headers, so stop criterion is the empty line!
+               ArraySM(r'-+',
                        r'\s*\d+\s+\S+\s+c\s+.*',
-                       context.adhoc_get_frac_coords),
-               SM(r'-------------')
+                       context.adhoc_get_frac_coords,
+                       stop=r'$^'),
            ]),
+        #ArraySM(r'\s*Brillouin zone sampling points\s*:',
+        #        r'\s*\d+\s+\S+\s+\S+\s+\S+\s+\S+',
+                #get_array('eigenvalues_kpoints', 1, 4))
+        #SM(r'\s*Brillouin zone sampling points\s*:',
+        #   name='BZ sampling header',
+        #   subMatchers=[
+        #       SM(r'-+', name='bar'),
+        #       ArraySM(r'',
+        #               r'\s*\d+\s+\S+\s+\S+\s+\S+\s+\S+',
+        #               get_array('x_
+        #   ])
     ])
 
 def main(**kwargs):
