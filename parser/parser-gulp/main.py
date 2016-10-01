@@ -113,37 +113,47 @@ time to end of optimisation
 class GulpContext(object):
     def __init__(self):
         self.data = {}
+        self.spacegroup = None
+        self.current_raw_cell = None
+        self.npbc = None
 
     def startedParsing(self, fname, parser):
         pass
 
     def onClose_section_system(self, backend, gindex, section):
         data = self.data
-        print(list(data.keys()))
 
         ctable = data.pop('gulp_coordinate_table', None)
         symbols = ctable[:, 0]
         gulp_labels = ctable[:, 1]
         positions = ctable[:, 2:5].astype(float)
 
+        if self.npbc is None:
+            self.npbc = section['x_gulp_pbc'][0]
+        assert self.npbc in range(4)
+
+        pbc = np.zeros(3, bool)
+        pbc[:self.npbc] = True
+        assert sum(pbc) == self.npbc
+
         # charge, occupancy?
 
-        spacegroup = section['x_gulp_space_group']
+        if self.spacegroup is None:
+            spacegroup = section['x_gulp_space_group']
+            if spacegroup is not None:
+                spacegroup = spacegroup[0]
+            self.spacegroup = spacegroup
 
-        if spacegroup is None:
-            #print(list(self.data.keys()))
-            npbc = section['x_gulp_pbc'][0]
-            pbc = np.zeros(3, bool)
-            pbc[:npbc] = True
+        self.current_raw_cell = data.pop('cell', self.current_raw_cell)
+        if self.npbc > 0:
+            assert self.current_raw_cell is not None
 
-            if npbc == 0:
-                cell3d = np.identity(3)
-            else:
-                cell = data['cell']
-                assert npbc in [0, 1, 2, 3]
-                assert cell.shape == (npbc, 3)
-                cell3d = np.identity(3)
-                cell3d[:npbc, :] = cell
+        if self.spacegroup is None:
+            cell3d = np.identity(3)
+            if self.npbc > 0:
+                cell = self.current_raw_cell
+                assert cell.shape == (self.npbc, 3), cell.shape
+                cell3d[:self.npbc, :] = cell
 
             # use Atoms to get scaled positions/cell right:
             atoms = Atoms([0] * len(positions), cell=cell3d,
@@ -157,9 +167,7 @@ class GulpContext(object):
                     sym = '%s-%s' % (sym, label)
                 atom_labels.append(sym)
 
-            assert sum(atoms.pbc) == npbc
         else:
-            group = section['x_gulp_patterson_group']
             # group may be none ---- no spacegroup
             cellpar = [section['x_gulp_cell_a'],
                        section['x_gulp_cell_b'],
@@ -169,7 +177,7 @@ class GulpContext(object):
                        section['x_gulp_cell_gamma']]
             for x in cellpar:
                 assert len(x) == 1
-            num = get_spacegroup_number(spacegroup[0])
+            num = get_spacegroup_number(self.spacegroup)
 
             atoms_by_label = {}
             for i, (s, l, p) in enumerate(zip(symbols, gulp_labels, positions)):
@@ -195,11 +203,10 @@ class GulpContext(object):
                 # Also, the ordering may be messed up.
                 # This is torturous.
             atom_positions = np.array(atom_positions)
-            assert section['x_gulp_pbc'][0] == 3
 
         backend.addArrayValues('atom_labels', np.asarray(atom_labels))
         backend.addArrayValues('configuration_periodic_dimensions',
-                               np.array(atoms.pbc))
+                               np.array(pbc))
         backend.addValue('number_of_atoms', len(atom_labels))
         # The cell can be infinite in some directions.
         # In that case the cell value will just be one (it has to have some value!!)
@@ -328,15 +335,61 @@ def get_input_system_sm():
                       SM(r'-+', name='bar'),
                       # We need to skip the 'Region 1' headers, so stop criterion is the empty line!
                       context.multi_sm('gulp_coordinate_table',
-                                       r'-+',
+                                       r'-----+',
                                        #No.  Atomic       x           y          z         Charge      Occupancy
                                        #     Label      (Frac)      (Frac)     (Frac)        (e)         (Frac)
                                        #
                                        #     1      La      c       0.333333   0.666667   0.245000    *  9.00000    1.000000
-                                       r'\s*\d+\s+(\S+)\s+(\S)[\s\*]+(\S+)[\s\*]+(\S+)[\s\*]+(\S+)[\s\*]+(\S+)[\s\*]+(\S+)',
-                                       r'$^')
+                                       r'\s*\d+\s+(\S+)\s+(\S+)[\s\*]+(\S+)[\s\*]+(\S+)[\s\*]+(\S+)[\s\*]+(\S+)[\s\*]+(\S+)',
+                                       r'----+')
                   ]),
             ])
+    return m
+
+def get_optimise_sm():
+    m = SM(r'\s*Start of bulk optimisation :',
+           name='opt-start',
+           repeats=True,
+           sections=['section_system',
+                     'section_single_configuration_calculation'],
+           subMatchers=[
+               SM(r'\s*Components of energy :',
+                  name='e-components',
+                  subMatchers=[
+                      SM(r'\s*Total lattice energy\s*=\s*(?P<energy_total__eV>\S+)\s*eV',
+                         name='etotal')
+                  ]),
+               SM(r'\s*Final (asymmetric unit|fractional) coordinates( of atoms)?\s*:',
+                  subMatchers=[
+                      context.multi_sm('gulp_coordinate_table',
+                                       r'-------------+',
+                                       # This table is slightly differently formatted than the one from the input
+                                       #--------------------------------------------------------------------------------
+                                       #   No.  Atomic        x           y           z         Radius
+                                       #        Label       (Frac)      (Frac)      (Frac)       (Angs)
+                                       #--------------------------------------------------------------------------------
+                                       #     1      La      c     0.333333    0.666667    0.248457    0.000000
+                                       #     2      O       c     0.000000    0.000000    0.000000    0.000000
+                                       r'\s*\d+\s*(\S+)\s*(\S+)\s*(\S+)\s*(\S+)\s*(\S+)\s*(\S+)',
+                                       r'^$')
+                  ]),
+               SM(r'\s*Final Cartesian lattice vectors \(Angstroms\) :',
+                  subMatchers=[
+                      context.multi_sm(r'cell',
+                                       r'',
+                                       r'\s*(\S+)\s*(\S+)\s*(\S+)')
+                  ]),
+               SM(r'\s*Final cell parameters and derivatives :',
+                  name='finalcell',
+                  subMatchers=[
+                      SM(r'\s*a\s*(?P<x_gulp_cell_a>\S+)\s+Angstrom', name='a'),
+                      SM(r'\s*b\s*(?P<x_gulp_cell_b>\S+)\s+Angstrom', name='b'),
+                      SM(r'\s*c\s*(?P<x_gulp_cell_c>\S+)\s+Angstrom', name='c'),
+                      SM(r'\s*alpha\s*(?P<x_gulp_cell_alpha>\S+)\s+Degrees', name='alpha'),
+                      SM(r'\s*beta\s*(?P<x_gulp_cell_beta>\S+)\s+Degrees', name='beta'),
+                      SM(r'\s*gamma\s*(?P<x_gulp_cell_gamma>\S+)\s+Degrees', name='gamma'),
+                  ])
+           ])
     return m
 
 infoFileDescription = SM(
@@ -349,27 +402,7 @@ infoFileDescription = SM(
         SM(r'\*\s*Version\s*=\s*(?P<program_version>\S+)',
            name='version'),
         get_input_system_sm(),
-        #SM(r'\s*\*+\s*Optimisation achieved\s*\*+',
-        #   name='opt-output',
-        #   sections=['section_system',
-        #             'section_single_configuration_calculation'],
-        #   subMatchers=[
-        #       SM(r'\s*Final energy\s*=\s*(?P<energy_total__eV>\S+)\s*eV',
-        #          name='energy'),
-               #ArraySM(
-        #          
-        #   ]),
-        #ArraySM(r'\s*Brillouin zone sampling points\s*:',
-        #        r'\s*\d+\s+\S+\s+\S+\s+\S+\s+\S+',
-                #get_array('eigenvalues_kpoints', 1, 4))
-        #SM(r'\s*Brillouin zone sampling points\s*:',
-        #   name='BZ sampling header',
-        #   subMatchers=[
-        #       SM(r'-+', name='bar'),
-        #       ArraySM(r'',
-        #               r'\s*\d+\s+\S+\s+\S+\s+\S+\s+\S+',
-        #               get_array('x_
-        #   ])
+        get_optimise_sm(),  # note British spelling
         SM(r'x^',
            name='impossible') # 'Parse' the whole file
     ])
