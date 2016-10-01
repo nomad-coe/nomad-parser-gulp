@@ -110,101 +110,12 @@ time to end of optimisation
 """
 
 
-def errprint(func):
-    def wrapper(backend, lines):
-        try:
-            func(backend, lines)
-        except Exception:
-            print('Error in %s: %d lines' % (func.__name__,
-                                             len(lines)))
-            for line in lines:
-                print(line, file=sys.stderr)
-            raise
-    return wrapper
-
-def tokenize(lines):
-    return np.array([line.split() for line in lines], object)
-
-"""
-# XXXX copied from Siesta parser
-def ArraySM(header, row, build, stop=r'', **kwargs):
-    class LineBuf:
-        def __init__(self):
-            self.lines = []
-
-        def addrow(self, parser):
-            line = parser.fIn.readline()
-            self.lines.append(line)
-
-        def _build_array(self, parser):
-            build(parser.backend.superBackend, self.lines)
-            self.lines = []
-
-    linebuf = LineBuf()
-    sm = SM(header,
-            name=kwargs.pop('name', 'startarray'),
-            required=True,
-            subFlags=SM.SubFlags.Sequenced,
-            subMatchers=[
-                SM('(%s)' % row, name='array', repeats=True,
-                   forwardMatch=True,
-                   adHoc=linebuf.addrow, required=True),
-                SM(stop, endReStr='', adHoc=linebuf._build_array, name='endarray',
-                   forwardMatch=True)
-            ],
-            **kwargs)
-    return sm
-"""
-
-"""
-def get_frac_coords(backend, lines):
-    #print('LINES')
-    positions = []
-    symbols = []
-    for line in lines:
-        tokens = [t for t in line.split() if not t == '*']
-        sym = tokens[1]
-        assert tokens[2] == 'c'
-        pos = [float(x) for x in tokens[3:6]]
-        assert len(pos) == 3
-        positions.append(pos)
-        symbols.append(sym)
-    positions = np.array(positions)
-    symbols = np.array(symbols)
-    backend.addArrayValues('x_gulp_atomic_basis_symbols', symbols)
-    backend.addArrayValues('x_gulp_atomic_basis_positions', positions)
-"""
-
-def get_array(metaname, dtype=float, istart=0, iend=None, unit=None,
-              storage=None):
-    @errprint
-    def buildarray(backend, lines):
-        arr = tokenize(lines)
-        if iend is None:
-            arr = arr[:, istart:]
-        else:
-            arr = arr[:, istart:iend]
-        arr = arr.astype(dtype)
-        if unit is not None:
-            arr = convert_unit(arr, unit)
-        if storage is not None:
-            storage[metaname] = arr
-        else:
-            backend.addArrayValues(metaname, arr)
-    return buildarray
-
-
 class GulpContext(object):
     def __init__(self):
         self.data = {}
 
     def startedParsing(self, fname, parser):
         pass
-
-    def save_array(self, key, dtype=float, istart=0, iend=None,
-                   unit=None):
-        return get_array(key, dtype=dtype, istart=istart, iend=iend, unit=unit,
-                         storage=self.data)
 
     def onClose_section_system(self, backend, gindex, section):
         data = self.data
@@ -319,7 +230,6 @@ class GulpContext(object):
             allgroups.append(thislinegroups)
 
         def savearray(parser):
-            print('SAVE', name)
             arr = np.array(allgroups, dtype=object)
             del allgroups[:]
             if name in self.data:
