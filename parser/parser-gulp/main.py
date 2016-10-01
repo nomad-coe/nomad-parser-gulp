@@ -31,18 +31,18 @@ parser_info = {'name': 'gulp-parser', 'version': '1.0'}
 
 #OK    "program_name",
 #OK    "atom_labels",
-#inp    "atom_positions",
+#OK    "atom_positions",
 #OK    "program_version",
-#    "energy_total",
-#inp    "simulation_cell",
+#OK    "energy_total",
+#OK    "simulation_cell",
 #OK    "configuration_periodic_dimensions"
 
-#inp    'section_system',
+#OK    'section_system',
 #    'section_method',
 #    'section_frame_sequence',
 #    'section_sampling_method',
-#    'single_configuration_to_calculation_method_ref',
-#    'single_configuration_calculation_to_system_ref',
+#OK    'single_configuration_to_calculation_method_ref',
+#OK    'single_configuration_calculation_to_system_ref',
 #    'atom_forces_raw',
 #    'frame_sequence_local_frames_ref',
 #    'frame_sequence_to_sampling_ref',
@@ -117,8 +117,24 @@ class GulpContext(object):
         self.current_raw_cell = None
         self.npbc = None
 
+        self.section_refs = {}
+
     def startedParsing(self, fname, parser):
         pass
+
+    # Standard onOpen definitions from Siesta parser
+    def onOpen_section_sampling_method(self, backend, gindex, section):
+        self.section_refs['sampling_method'] = gindex
+
+    def onOpen_section_frame_sequence(self, backend, gindex, section):
+        self.section_refs['frame_sequence'] = gindex
+
+    def onOpen_section_method(self, backend, gindex, section):
+        self.section_refs['method'] = gindex
+
+    def onOpen_section_system(self, backend, gindex, section):
+        self.section_refs['system'] = gindex
+
 
     def onClose_section_system(self, backend, gindex, section):
         data = self.data
@@ -218,6 +234,12 @@ class GulpContext(object):
         backend.addArrayValues('atom_positions',
                                convert_unit(atoms.positions, 'angstrom'))
 
+    def onClose_section_single_configuration_calculation(self, backend,
+                                                         gindex, section):
+        backend.addValue('single_configuration_to_calculation_method_ref',
+                         self.section_refs['method'])
+        backend.addValue('single_configuration_calculation_to_system_ref',
+                         self.section_refs['system'])
 
     # multi_sm is a copy from Siesta
     def multi_sm(self, name, startpattern, linepattern, endmatcher=None,
@@ -277,22 +299,12 @@ class GulpContext(object):
         return sm
 
 
-        
 context = GulpContext()
-
-def optimization_sm():
-    m = SM(r'Start of \S+ optimisation :',
-           name='optimization_sm',
-           sections=['section_system'],
-           subMatchers=[
-               
-           ])
-    return m
 
 def get_input_system_sm():
     m = SM(r'\*\s*Input for Configuration',
            name='input-conf',
-           sections=['section_system'],
+           sections=['section_system', 'section_method'],
            subMatchers=[
                SM(r'\s*Dimensionality\s*=\s*(?P<x_gulp_pbc>\d+)',
                   name='pbc'),
