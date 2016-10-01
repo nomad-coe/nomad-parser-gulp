@@ -319,6 +319,7 @@ class GulpContext(object):
             allgroups.append(thislinegroups)
 
         def savearray(parser):
+            print('SAVE', name)
             arr = np.array(allgroups, dtype=object)
             del allgroups[:]
             if name in self.data:
@@ -330,8 +331,10 @@ class GulpContext(object):
                     pass
                 else:
                     raise ValueError('Unknown keyword %s' % conflict)
-            if arr.size > 0:
-                self.data[name] = arr
+            #if arr.size > 0:
+            if arr.size == 0:
+                arr.shape = (0, ngroups)
+            self.data[name] = arr
 
         if endmatcher is None:
             endmatcher = r'.*'
