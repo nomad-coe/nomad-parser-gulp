@@ -268,9 +268,11 @@ class GulpContext(object):
             atom_positions = []
             for label in atoms_by_label:
                 data = atoms_by_label[label]
+
                 sym = [d[1].strip('0123456789') for d in data]
+                spos = [d[2] for d in data]
                 atoms = crystal(sym,
-                                basis=positions,
+                                basis=spos,
                                 spacegroup=num,
                                 cellpar=[x[0] for x in cellpar])
                 # Grrr, we can't easily reconstruct the exact labels.  Sod that!
