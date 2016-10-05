@@ -18,6 +18,79 @@ from nomadcore.unit_conversion.unit_conversion \
 from spacegroups import get_spacegroup_number
 #from util import floating, integer
 
+# Generate list of all energy contributions:
+# cat outputs/example*.got | grep "Components of energy" -A 20 | grep = |grep eV | cut -c 1-30 | sort|uniq|less
+energy_contributions = """\
+Attachment energy
+Attachment energy/unit
+Bond-order potentials
+Brenner potentials
+Bulk energy
+Dispersion (real+recip)
+Electric_field*distance
+Energy shift
+Four-body potentials
+Improper torsions
+Interatomic potentials
+Many-body potentials
+Monopole - monopole (real)
+Monopole - monopole (recip)
+Monopole - monopole (total)
+Neutralising energy
+  Non-primitive unit cell
+Out of plane potentials
+  Primitive unit cell
+ReaxFF force field
+Region 1-2 interaction
+Region 2-2 interaction
+Self energy (EEM/QEq/SM)
+SM Coulomb correction
+Solvation energy
+Three-body potentials
+Total lattice energy"""
+
+
+def get_gulp_energy_patterns():
+    for name in energy_contributions.splitlines():
+        name = name.strip()
+        basepattern = re.escape(name)
+        name = name.lower()
+        name = name.replace(' - ', '_')
+        name = name.replace(' (', '_')
+        name = name.replace(')', '')
+        name = name.replace('field*distance', 'field_times_distance')
+        name = re.sub(r'[-+/\s]', '_', name)
+
+        metaname = 'x_gulp_energy_%s' % name
+        pattern = r'\s*%s\s*=\s*(?P<%s__eV>\S+)\s*eV' % (basepattern,
+                                                         metaname)
+        yield name, metaname, pattern
+
+energy_term_template = """{
+    "description": "GULP energy term for %(name)s",
+    "name": "%(metaname)s",
+    "superNames": [ "section_single_configuration_calculation" ],
+    "dtypeStr": "f",
+    "shape": []
+  }, """
+
+def generate_energy_json():
+    for name, metaname, pattern in get_gulp_energy_patterns():
+        print(energy_term_template % dict(name=name,
+                                          metaname=metaname), end='')
+# generate_energy_json()  # Print JSON for energy terms to stdout
+
+def get_gulp_energy_sm():
+    sms = []
+    for name, metaname, pattern in get_gulp_energy_patterns():
+        #print(pattern)
+        sms.append(SM(pattern, name=name))
+
+    return SM(r'\s*Components of energy :',
+              name='gulp-energy',
+              subFlags=SM.SubFlags.Unordered,
+              subMatchers=sms)
+
 metaInfoPath = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)),"../../../../nomad-meta-info/meta_info/nomad_meta_info/gulp.nomadmetainfo.json"))
 metaInfoEnv, warnings = loadJsonFile(filePath=metaInfoPath,
                                      dependencyLoader=None,
@@ -116,6 +189,7 @@ class GulpContext(object):
         self.spacegroup = None
         self.current_raw_cell = None
         self.npbc = None
+        self.use_spacegroup = None
 
         self.section_refs = {}
 
@@ -135,6 +209,11 @@ class GulpContext(object):
     def onOpen_section_system(self, backend, gindex, section):
         self.section_refs['system'] = gindex
 
+    def adhoc_whether_using_spacegroup(self, parser):
+        line = parser.fIn.readline()
+
+        if 'Final coordinates of region' in line:
+            self.use_spacegroup = False
 
     def onClose_section_system(self, backend, gindex, section):
         data = self.data
@@ -164,7 +243,10 @@ class GulpContext(object):
         if self.npbc > 0:
             assert self.current_raw_cell is not None
 
-        if self.spacegroup is None:
+        if self.use_spacegroup is None:
+            self.use_spacegroup = (self.spacegroup is not None)
+
+        if not self.use_spacegroup:
             cell3d = np.identity(3)
             if self.npbc > 0:
                 cell = self.current_raw_cell
@@ -192,7 +274,7 @@ class GulpContext(object):
                        section['x_gulp_cell_beta'],
                        section['x_gulp_cell_gamma']]
             for x in cellpar:
-                assert len(x) == 1
+                assert len(x) == 1, cellpar
             num = get_spacegroup_number(self.spacegroup)
 
             atoms_by_label = {}
@@ -316,7 +398,7 @@ def get_input_system_sm():
                       SM(r'\s*Patterson group\s*:\s*(?P<x_gulp_patterson_group>.+?)\s*$',
                          name='patterson'),
                   ]),
-               SM(r'\s*(Cartesian lattice|Surface Cartesian|Polymer Cartesian) vectors? \(Angstroms\) :',
+               SM(r'\s*([Cc]artesian lattice|Surface [Cc]artesian|Polymer [Cc]artesian) vectors? \(Angstroms\) :',
                   name='lattice-header',
                   subMatchers=[
                       context.multi_sm('cell',
@@ -337,14 +419,14 @@ def get_input_system_sm():
                       SM(r'\s*b =\s*(?P<x_gulp_cell_b>\S+)\s*beta\s*=\s*(?P<x_gulp_cell_beta>\S+)'),
                       SM(r'\s*c =\s*(?P<x_gulp_cell_c>\S+)\s*gamma\s*=\s*(?P<x_gulp_cell_gamma>\S+)'),
                   ]),
-               SM(r'\s*(Fractional|Cartesian|Mixed fractional/Cartesian) coordinates of (asymmetric unit|surface|polymer|cluster|)\s*:',
+               SM(r'\s*(Fractional|[Cc]artesian|Mixed fractional/[Cc]artesian) coordinates of (asymmetric unit|surface|polymer|cluster|)\s*:',
                   #r'\s*(Fractional coordinates of asymmetric unit'
                   #r'|Mixed fractional/Cartesian coordinates of (surface|polymer)'
                   #r'|Cartesian coordinates of cluster)\s*:',
                   subFlags=SM.SubFlags.Sequenced,
                   name='frac-coords',
                   subMatchers=[
-                      SM(r'-+', name='bar'),
+                      SM(r'--------+', name='bar'),
                       # We need to skip the 'Region 1' headers, so stop criterion is the empty line!
                       context.multi_sm('gulp_coordinate_table',
                                        r'-----+',
@@ -353,25 +435,48 @@ def get_input_system_sm():
                                        #
                                        #     1      La      c       0.333333   0.666667   0.245000    *  9.00000    1.000000
                                        r'\s*\d+\s+(\S+)\s+(\S+)[\s\*]+(\S+)[\s\*]+(\S+)[\s\*]+(\S+)[\s\*]+(\S+)[\s\*]+(\S+)',
-                                       r'----+')
+                                       r'------------+')
                   ]),
+               #SM(r'General interatomic potentials',
+               #),
             ])
     return m
 
+
+def get_output_config_sm():
+    m = SM(r'\*\s*Output for configuration',
+           name='output-conf',
+           endReStr='\s*Total lattice energy.*?kJ',
+           sections=['section_single_configuration_calculation'],
+           subMatchers=[
+               get_gulp_energy_sm()
+           ])
+    return m
+
 def get_optimise_sm():
-    m = SM(r'\s*Start of bulk optimisation :',
+    m = SM(r'\s*\*+\s*Optimisation achieved\s*\**',
+        #r'\s*Start of \S+ optimisation :', #r'\*\s*Output for configuration',
            name='opt-start',
            repeats=True,
            sections=['section_system',
                      'section_single_configuration_calculation'],
            subMatchers=[
-               SM(r'\s*Components of energy :',
-                  name='e-components',
-                  subMatchers=[
-                      SM(r'\s*Total lattice energy\s*=\s*(?P<energy_total__eV>\S+)\s*eV',
-                         name='etotal')
-                  ]),
-               SM(r'\s*Final (asymmetric unit|fractional) coordinates( of atoms)?\s*:',
+               get_gulp_energy_sm(),
+               #SM(r'\s*Components of energy :',
+               #   name='e-components',
+               #   subMatchers=[
+               #       get_gulp_energy_sm()
+                      #SM(r'\s*Interatomic potentials\s*=\s*(?P<x_gulp_energy_interatomic_potentials__eV>\S+)\s*eV'),
+                      #SM(r'\s*Monopole - monopole \(real\)\s*=\s*(?P<x_gulp_energy_monopole_monopole_real>\S+)\s*eV'),
+                      #SM(r'\s*Monopole - monopole \(recip\)\s*=\s*(?P<x_gulp_energy_monopole_monopole_recip>\S+)\s*eV'),
+                      #SM(r'\s*Monopole - monopole \(total\)\s*=\s*(?P<x_gulp_energy_monopole_monopole_total>\S+)\s*eV'),
+                      #SM(r'\s*Electric_field\*distance\s*=\s*(?P<x_gulp_energy_electric_field>\S+)\s*eV'),
+                      #SM(r'\s*Total lattice energy\s*=\s*(?P<energy_total__eV>\S+)\s*eV',
+                      #   name='etotal')
+               #   ]),
+               SM(r'\s*Final (asymmetric unit|fractional|fractional/[Cc]artesian|[Cc]artesian)?\s*coordinates\s*(of atoms|of region \d+)?\s*:',
+                  forwardMatch=True,
+                  adHoc=context.adhoc_whether_using_spacegroup,
                   subMatchers=[
                       context.multi_sm('gulp_coordinate_table',
                                        r'-------------+',
@@ -385,7 +490,7 @@ def get_optimise_sm():
                                        r'\s*\d+\s*(\S+)\s*(\S+)\s*(\S+)\s*(\S+)\s*(\S+)\s*(\S+)',
                                        r'^$')
                   ]),
-               SM(r'\s*Final Cartesian lattice vectors \(Angstroms\) :',
+               SM(r'\s*Final [Cc]artesian lattice vectors \(Angstroms\) :',
                   subMatchers=[
                       context.multi_sm(r'cell',
                                        r'',
@@ -404,6 +509,27 @@ def get_optimise_sm():
            ])
     return m
 
+def get_header_sm():
+    m = SM(r'\*\s*GENERAL UTILITY LATTICE PROGRAM\s*\*',
+           name='header',
+           endReStr=r'\s*Job Started',
+           subMatchers=[
+               SM(r'\*\*+'),
+               SM(r'\*\s*Version\s*=\s*(?P<program_version>\S+)',
+                  name='version'),
+               SM(r'\*\*\*\*+',
+                  endReStr=r'\*\*\*\*+',
+                  name='bar',
+                  subMatchers=[
+                      SM(r'\*\s*(?P<x_gulp_main_keyword>\S+)\s*-',
+                         repeats=True,
+                         sections=['x_gulp_section_main_keyword'],
+                         name='mainkw')
+                  ])
+           ])
+    return m
+
+
 infoFileDescription = SM(
     name='root',
     weak=True,
@@ -411,9 +537,9 @@ infoFileDescription = SM(
     fixedStartValues={'program_name': 'gulp'},
     sections=['section_run'],
     subMatchers=[
-        SM(r'\*\s*Version\s*=\s*(?P<program_version>\S+)',
-           name='version'),
+        get_header_sm(),
         get_input_system_sm(),
+        get_output_config_sm(),
         get_optimise_sm(),  # note British spelling
         SM(r'x^',
            name='impossible') # 'Parse' the whole file
