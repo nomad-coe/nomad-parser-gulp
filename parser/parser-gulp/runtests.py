@@ -5,6 +5,7 @@ import re
 from optparse import OptionParser
 from subprocess import Popen, PIPE
 import os
+from ase.parallel import world
 
 p = OptionParser()
 opts, args = p.parse_args()
@@ -29,7 +30,9 @@ if len(args) == 0:
 else:
     testfiles = argv
 
-for testfile in testfiles:
+for i, testfile in enumerate(testfiles):
+    if i % world.size != world.rank:
+        continue
     dirname, basename = os.path.split(testfile)
     print(basename)
     args = 'python main.py --annotate'.split()
