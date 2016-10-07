@@ -215,6 +215,12 @@ class GulpContext(object):
         if 'Final coordinates of region' in line:
             self.use_spacegroup = False
 
+    def onClose_section_method(self, backend, gindex, section):
+        species = self.data['species']
+        sym, types, charges = species.T
+        charges = convert_unit(charges.astype(float), 'e')
+        backend.addArrayValues('x_gulp_species_charge', charges)
+
     def onClose_section_system(self, backend, gindex, section):
         data = self.data
 
@@ -281,22 +287,39 @@ class GulpContext(object):
             for i, (s, l, p) in enumerate(zip(symbols, gulp_labels, positions)):
                 atoms_by_label.setdefault(l, []).append([i, s, p])
 
+                labelpattern = re.compile(r'([A-Z][a-z]?)(\d*)')
             atom_labels = []
             atom_positions = []
             for label in atoms_by_label:
                 data = atoms_by_label[label]
 
-                sym = [d[1].strip('0123456789') for d in data]
+                sym = []
+                tags = []
+                for d in data:
+                    m = labelpattern.match(d[1])
+                    assert m is not None, d[1]
+                    sym0, num0 = m.groups()
+                    sym.append(sym0)
+                    tags.append(int(num0) if num0 else 0)
+                #sym = [d[1].strip('0123456789') for d in data]
                 spos = [d[2] for d in data]
-                atoms = crystal(sym,
+
+                basis_atoms = Atoms(sym, tags=tags, scaled_positions=spos)
+                atoms = crystal(basis_atoms,#sym,
                                 basis=spos,
                                 spacegroup=num,
                                 cellpar=[x[0] for x in cellpar])
                 # Grrr, we can't easily reconstruct the exact labels.  Sod that!
                 symbols = atoms.get_chemical_symbols()
-                if label != 'c':
-                    symbols = ['%s-%s' % (sym, label) for sym in symbols]
-                atom_labels.extend(symbols)
+                tags = atoms.get_tags()
+                for sym, tag in zip(symbols, tags):
+                    tokens = [sym]
+                    if tag != 0:
+                        tokens.append('%d' % tag)
+                    if label != 'c':
+                        tokens.append('-%s' % label)
+                    atom_labels.append(''.join(tokens))
+
                 atom_positions.extend(atoms.positions)
                 # Also, the ordering may be messed up.
                 # This is torturous.
@@ -386,7 +409,7 @@ context = GulpContext()
 def get_input_system_sm():
     m = SM(r'\*\s*Input for Configuration',
            name='input-conf',
-           sections=['section_system', 'section_method'],
+           sections=['section_system'],
            subMatchers=[
                SM(r'\s*Dimensionality\s*=\s*(?P<x_gulp_pbc>\d+)',
                   name='pbc'),
@@ -530,6 +553,51 @@ def get_header_sm():
     return m
 
 
+def get_general_input_sm():
+    m = SM(r'\*\s*General input information',
+           name='general-input',
+           sections=['section_method'],
+           subMatchers=[
+               SM(r'\s*Species output for all configurations :'),
+               SM(r'\s*Species\s*Type\s*Atomic',
+                  subMatchers=[
+                      context.multi_sm('species',
+                                       r'-------+',
+                                       #    species   type             charge
+                                       r'\s*(\S+)\s*(\S+)\s*\d+\s*\S+\s*(\S+)',
+                                       r'-------+')
+                  ]),
+               SM(r'\s*General interatomic potentials :',
+                  name='potentials'),
+               SM(r'\s*Atom\s*Types\s*Potential\s*A*\s*B\s*C\s*D',
+                  #Atom  Types   Potential         A         B         C         D     Cutoffs(Ang)
+                  #  1     2                                                            Min    Max
+                  # -------------------------------------------------------------------------------
+                  #O    s La   s Buckingham    0.570E+04 0.299      38.9      0.00     0.000 24.000
+                  subMatchers=[
+                      SM(r'----------+', name='potentials',
+                         endReStr=r'----------+',
+                         subMatchers=[
+                             SM(r'(?P<x_gulp_forcefield_species_1>\w+)\s*'
+                                r'(?P<x_gulp_forcefield_speciestype_1>\S+)\s*'
+                                r'(?P<x_gulp_forcefield_species_2>\S+)\s*'
+                                r'(?P<x_gulp_forcefield_speciestype_2>\S+)\s*'
+                                # The SRGlue potential is badly written in the table and unparseable.
+                                # Probably a bug.  So just ignore it.
+                                r'(SRGlue|(?P<x_gulp_forcefield_potential_name>\b.{1,14}?)\s*'
+                                r'(?P<x_gulp_forcefield_parameter_a>\S+)\s*'
+                                r'(?P<x_gulp_forcefield_parameter_b>\S+)\s*'
+                                r'(?P<x_gulp_forcefield_parameter_c>\S+)\s*'
+                                r'(?P<x_gulp_forcefield_parameter_d>\S+)\s*\S+\s*\S+$)',
+                                name='forcefield',
+                                sections=['x_gulp_section_forcefield'],
+                                repeats=True
+                             ),
+                         ]),
+                  ])
+           ])
+    return m
+
 infoFileDescription = SM(
     name='root',
     weak=True,
@@ -539,6 +607,7 @@ infoFileDescription = SM(
     subMatchers=[
         get_header_sm(),
         get_input_system_sm(),
+        get_general_input_sm(),
         get_output_config_sm(),
         get_optimise_sm(),  # note British spelling
         SM(r'x^',
