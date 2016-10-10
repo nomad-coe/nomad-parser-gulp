@@ -225,6 +225,11 @@ class GulpContext(object):
         data = self.data
 
         ctable = data.pop('gulp_coordinate_table', None)
+        if ctable is None:
+            return  # This is probably an MD simulation or something.
+            # I am sure we will get to suffer because of this relatively arbitrary
+            # return, but what can you do
+
         symbols = ctable[:, 0]
         gulp_labels = ctable[:, 1]
         positions = ctable[:, 2:5].astype(float)
@@ -411,6 +416,8 @@ def get_input_system_sm():
            name='input-conf',
            sections=['section_system'],
            subMatchers=[
+               SM(r'\s*Formula\s*=\s*(?P<x_gulp_formula>\S+)',
+                  name='formula'),
                SM(r'\s*Dimensionality\s*=\s*(?P<x_gulp_pbc>\d+)',
                   name='pbc'),
                SM(r'\s*Symmetry\s*:',
@@ -537,6 +544,9 @@ def get_header_sm():
            name='header',
            endReStr=r'\s*Job Started',
            subMatchers=[
+               SM(r'\*\s+.*?\s*\*$',
+                  name='Julian and friends',
+                  repeats=True),
                SM(r'\*\*+'),
                SM(r'\*\s*Version\s*=\s*(?P<program_version>\S+)',
                   name='version'),
@@ -548,7 +558,54 @@ def get_header_sm():
                          repeats=True,
                          sections=['x_gulp_section_main_keyword'],
                          name='mainkw')
-                  ])
+                  ]),
+               SM(r'\*\s*(?P<x_gulp_title>.*?)\s*\*$',
+                  name='title')
+           ])
+    return m
+
+def get_gulp_potential_species_pattern(nspecies):
+    tokens = []
+    for i in range(1, nspecies + 1):
+        tokens.append(r'(?P<x_gulp_forcefield_species_%d>\w+)\s*' % i)
+        tokens.append(r'(?P<x_gulp_forcefield_speciestype_%d>\S+)\s*' % i)
+    return ''.join(tokens)
+
+
+def get_forcefield_table_sm(header, columnheaderpattern, tablepattern, name):
+    m = SM(header,#r'\s*(General interatomic|Intramolecular|Intermolecular) potentials :',
+           name=name,
+           subMatchers=[
+               SM(columnheaderpattern,#r'\s*Atom\s*Types\s*Potential\s*A*\s*B\s*C\s*D',
+                  #Atom  Types   Potential         A         B         C         D     Cutoffs(Ang)
+                  #  1     2                                                            Min    Max
+                  # -------------------------------------------------------------------------------
+                  #O    s La   s Buckingham    0.570E+04 0.299      38.9      0.00     0.000 24.000
+                  subMatchers=[
+                      SM(r'----------+', name='potentials',
+                         endReStr=r'----------+',
+                         subMatchers=[
+                             SM(tablepattern,#''.join(tokens),
+                                #get_gulp_potential_species_pattern(2) +
+                                #r'(?P<x_gulp_forcefield_species_1>\w+)\s*'
+                                #r'(?P<x_gulp_forcefield_speciestype_1>\S+)\s*'
+                                #r'(?P<x_gulp_forcefield_species_2>\S+)\s*'
+                                #r'(?P<x_gulp_forcefield_speciestype_2>\S+)\s*'
+                                # The SRGlue potential is badly written in the table and unparseable.
+                                # Probably a bug.  So just ignore it.
+                                #r'(SRGlue|(?P<x_gulp_forcefield_potential_name>\b.{1,14}?)\s*'
+                                #r'(?P<x_gulp_forcefield_parameter_a>\S+)\s*'
+                                #r'(?P<x_gulp_forcefield_parameter_b>\S+)\s*'
+                                #r'(?P<x_gulp_forcefield_parameter_c>\S+)\s*'
+                               # r'(?P<x_gulp_forcefield_parameter_d>\S+)\s*'
+                               # r'(?P<x_gulp_forcefield_cutoff_min>\S+\s*)'
+                               # r'(?P<x_gulp_forcefield_cutoff_max>\S+))$',
+                                name='table',
+                                sections=['x_gulp_section_forcefield'],
+                                repeats=True
+                            ),
+                         ]),
+                  ]),
            ])
     return m
 
@@ -567,33 +624,65 @@ def get_general_input_sm():
                                        r'\s*(\S+)\s*(\S+)\s*\d+\s*\S+\s*(\S+)',
                                        r'-------+')
                   ]),
-               SM(r'\s*General interatomic potentials :',
-                  name='potentials'),
-               SM(r'\s*Atom\s*Types\s*Potential\s*A*\s*B\s*C\s*D',
-                  #Atom  Types   Potential         A         B         C         D     Cutoffs(Ang)
-                  #  1     2                                                            Min    Max
-                  # -------------------------------------------------------------------------------
-                  #O    s La   s Buckingham    0.570E+04 0.299      38.9      0.00     0.000 24.000
+               get_forcefield_table_sm(r'\s*(General interatomic|Intramolecular) potentials :',
+                                       r'\s*Atom\s*Types\s*Potential\s*A*\s*B\s*C\s*D',
+                                       get_gulp_potential_species_pattern(2) +
+                                       r'(SRGlue|'
+                                       r'(?P<x_gulp_forcefield_potential_name>\b.{1,14}?)\s*'
+                                       r'(?P<x_gulp_forcefield_parameter_a>\S+)\s*'
+                                       r'(?P<x_gulp_forcefield_parameter_b>\S+)\s*'
+                                       r'(?P<x_gulp_forcefield_parameter_c>\S+)\s*'
+                                       r'(?P<x_gulp_forcefield_parameter_d>\S+)\s*'
+                                       r'(?P<x_gulp_forcefield_cutoff_min>\S+\s*)'
+                                       r'(?P<x_gulp_forcefield_cutoff_max>\S+)$)',
+                                       name='interatomic'),
+               get_forcefield_table_sm(r'\s*(Intermolecular) potentials :',  # Basically a copy of the one just above
+                                       r'\s*Atom\s*Types\s*Potential\s*A*\s*B\s*C\s*D',
+                                       get_gulp_potential_species_pattern(2) +
+                                       r'(SRGlue|(?P<x_gulp_forcefield_potential_name>\b.{1,14}?)\s*'
+                                       r'(?P<x_gulp_forcefield_parameter_a>\S+)\s*'
+                                       r'(?P<x_gulp_forcefield_parameter_b>\S+)\s*'
+                                       r'(?P<x_gulp_forcefield_parameter_c>\S+)\s*'
+                                       r'(?P<x_gulp_forcefield_parameter_d>\S+)\s*'
+                                       r'(?P<x_gulp_forcefield_cutoff_min>\S+\s*)'
+                                       r'(?P<x_gulp_forcefield_cutoff_max>\S+))$',
+                                       name='intermolecular'),
+               get_forcefield_table_sm(r'\s*General Three-body potentials :',
+                                       r'\s*Atom\s*Atom\s*Atom\s*Force Constants\s*Theta',
+                                       get_gulp_potential_species_pattern(3) +
+                                       r'(?P<x_gulp_forcefield_threebody_1>\S+)\s*'
+                                       r'(?P<x_gulp_forcefield_threebody_2>\S+)\s*'
+                                       r'(?P<x_gulp_forcefield_threebody_3>\S+)\s*'
+                                       r'(?P<x_gulp_forcefield_threebody_theta>\S+)\s*',
+                                       name='3-body'),
+               get_forcefield_table_sm(r'\s*General Four-body potentials :',
+                                       r'\s*Atom Types\s*Force cst\s*Sign\s*Phase\s*Phi0',
+                                       get_gulp_potential_species_pattern(4) +
+                                       r'(?P<x_gulp_forcefield_fourbody_force_constant>\S+)\s*'
+                                       r'(?P<x_gulp_forcefield_fourbody_sign>\S+)\s*'
+                                       r'(?P<x_gulp_forcefield_fourbody_phase>\S+)\s*'
+                                       r'(?P<x_gulp_forcefield_fourbody_phi0>\S+)\s*',
+                                       name='3-body'),
+           ])
+    return m
+
+def get_md_sm():
+    m = SM(r'\*\s*Molecular Dynamics',
+           name='md',
+           subMatchers=[
+               SM(r'\s*Molecular dynamics production :',
+                  name='mdstep',
                   subMatchers=[
-                      SM(r'----------+', name='potentials',
-                         endReStr=r'----------+',
+                      SM(r'\s*\*\*\s*Time :\s*(?P<x_gulp_md_time__ps>\S+)\s*ps :',
+                         sections=['section_system', 'section_single_configuration_calculation'],
+                         repeats=True,
                          subMatchers=[
-                             SM(r'(?P<x_gulp_forcefield_species_1>\w+)\s*'
-                                r'(?P<x_gulp_forcefield_speciestype_1>\S+)\s*'
-                                r'(?P<x_gulp_forcefield_species_2>\S+)\s*'
-                                r'(?P<x_gulp_forcefield_speciestype_2>\S+)\s*'
-                                # The SRGlue potential is badly written in the table and unparseable.
-                                # Probably a bug.  So just ignore it.
-                                r'(SRGlue|(?P<x_gulp_forcefield_potential_name>\b.{1,14}?)\s*'
-                                r'(?P<x_gulp_forcefield_parameter_a>\S+)\s*'
-                                r'(?P<x_gulp_forcefield_parameter_b>\S+)\s*'
-                                r'(?P<x_gulp_forcefield_parameter_c>\S+)\s*'
-                                r'(?P<x_gulp_forcefield_parameter_d>\S+)\s*\S+\s*\S+$)',
-                                name='forcefield',
-                                sections=['x_gulp_section_forcefield'],
-                                repeats=True
-                             ),
-                         ]),
+                             SM(r'\s*Kinetic energy\s*\(eV\)\s*=\s*(?P<x_gulp_md_kinetic_energy__eV>\S+)'),
+                             SM(r'\s*Potential energy\s*\(eV\)\s*=\s*(?P<x_gulp_md_potential_energy__eV>\S+)'),
+                             SM(r'\s*Total energy\s*\(eV\)\s*=\s*(?P<x_gulp_md_total_energy__eV>\S+)'),
+                             SM(r'\s*Temperature\s*\(K\)\s*=\s*(?P<x_gulp_md_temperature__K>\S+)'),
+                             SM(r'\s*Pressure\s*\(GPa\)\s*=\s*(?P<x_gulp_md_pressure__GPa>\S+)'),
+                         ])
                   ])
            ])
     return m
@@ -610,6 +699,7 @@ infoFileDescription = SM(
         get_general_input_sm(),
         get_output_config_sm(),
         get_optimise_sm(),  # note British spelling
+        get_md_sm(),
         SM(r'x^',
            name='impossible') # 'Parse' the whole file
     ])
