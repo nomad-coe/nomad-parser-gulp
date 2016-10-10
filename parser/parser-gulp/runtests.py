@@ -6,6 +6,7 @@ from optparse import OptionParser
 from subprocess import Popen, PIPE
 import os
 from ase.parallel import world
+import platform
 
 p = OptionParser()
 opts, args = p.parse_args()
@@ -35,9 +36,12 @@ for i, testfile in enumerate(testfiles):
         continue
     dirname, basename = os.path.split(testfile)
     print(basename)
-    args = 'python main.py --annotate'.split()
+    py = 'python'
+    if platform.node() == 'labdev-nomad':
+        py = '/labEnv3/bin/python'
+    args = [py, 'main.py', '--annotate']
     args.append(testfile)
     proc = Popen(args, stdout=PIPE)
     txt = proc.stdout.read()
     with open('%s.json' % testfile, 'w') as fd:
-        fd.write(txt)
+        fd.write(txt.decode('ascii'))
