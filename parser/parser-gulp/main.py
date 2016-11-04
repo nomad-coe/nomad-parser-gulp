@@ -282,12 +282,21 @@ class GulpContext(object):
 
         if self.use_spacegroup:
             # group may be none ---- no spacegroup
-            cellpar = [section['x_gulp_cell_a'][-1],
-                       section['x_gulp_cell_b'][-1],
-                       section['x_gulp_cell_c'][-1],
-                       section['x_gulp_cell_alpha'][-1],
-                       section['x_gulp_cell_beta'][-1],
-                       section['x_gulp_cell_gamma'][-1]]
+
+            cellparnames = ['a', 'b', 'c', 'alpha', 'beta', 'gamma']
+
+            #try:#if 'x_gulp_cell_a' in section:
+            val = [section['x_gulp_cell_%s' % name] for name in cellparnames]
+            if val[0] is None:
+                # if we have the prim cell and not the full cell, it's because they
+                # are identical (as far as I can tell).
+                val = [section['x_gulp_prim_cell_%s' % name] for name in cellparnames]
+
+            cellpar = []
+            for v in val:
+                assert len(v) == 1
+                cellpar.append(v[0])
+            assert len(cellpar) == 6
 
             num = get_spacegroup_number(self.spacegroup)
 
@@ -531,12 +540,12 @@ def get_optimise_sm():
                SM(r'\s*Final cell parameters and derivatives :',
                   name='finalcell',
                   subMatchers=[
-                      SM(r'\s*a\s*(?P<x_gulp_cell_a>\S+)\s+Angstrom', name='a'),
-                      SM(r'\s*b\s*(?P<x_gulp_cell_b>\S+)\s+Angstrom', name='b'),
-                      SM(r'\s*c\s*(?P<x_gulp_cell_c>\S+)\s+Angstrom', name='c'),
-                      SM(r'\s*alpha\s*(?P<x_gulp_cell_alpha>\S+)\s+Degrees', name='alpha'),
-                      SM(r'\s*beta\s*(?P<x_gulp_cell_beta>\S+)\s+Degrees', name='beta'),
-                      SM(r'\s*gamma\s*(?P<x_gulp_cell_gamma>\S+)\s+Degrees', name='gamma'),
+                      SM(r'\s*a\s*(?P<x_gulp_prim_cell_a>\S+)\s+Angstrom', name='a'),
+                      SM(r'\s*b\s*(?P<x_gulp_prim_cell_b>\S+)\s+Angstrom', name='b'),
+                      SM(r'\s*c\s*(?P<x_gulp_prim_cell_c>\S+)\s+Angstrom', name='c'),
+                      SM(r'\s*alpha\s*(?P<x_gulp_prim_cell_alpha>\S+)\s+Degrees', name='alpha'),
+                      SM(r'\s*beta\s*(?P<x_gulp_prim_cell_beta>\S+)\s+Degrees', name='beta'),
+                      SM(r'\s*gamma\s*(?P<x_gulp_prim_cell_gamma>\S+)\s+Degrees', name='gamma'),
                   ]),
                SM(r'\s*Non-primitive lattice parameters :',
                   name='nonprim',
