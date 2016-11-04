@@ -234,6 +234,29 @@ class GulpContext(object):
         gulp_labels = ctable[:, 1]
         positions = ctable[:, 2:5].astype(float)
 
+        chemical_symbols = []
+        gulp_numeric_tags = []
+        for sym in symbols:
+            m = re.match(r'([A-Z][a-z]?)(\d*)', sym)
+            chemical_symbols.append(m.group(1))
+            gulp_numeric_tags.append(m.group(2))
+
+        # Construct a mapping which combines gulp numeric tags and core/shell
+        # etc. specification into a single numeric tag so ASE spacegroup
+        # module can distinguish the atoms when constructing the full system
+        types = {}
+        tags = []
+
+        ase_symbols = []
+        for sym, label in zip(symbols, gulp_labels):
+            full_label = '%s_%s' % (sym, label)
+            tag = types.setdefault(full_label, len(types))
+            tags.append(tag)
+            ase_symbols.append(re.match(r'[A-Z][a-z]?', sym).group())
+
+        # Really we want the opposite mapping
+        tag2type = dict((v, k) for k, v in types.items())
+
         if self.npbc is None:
             self.npbc = section['x_gulp_pbc'][0]
         assert self.npbc in range(4)
@@ -257,7 +280,46 @@ class GulpContext(object):
         if self.use_spacegroup is None:
             self.use_spacegroup = (self.spacegroup is not None)
 
-        if not self.use_spacegroup:
+        if self.use_spacegroup:
+            # group may be none ---- no spacegroup
+            cellpar = [section['x_gulp_cell_a'][-1],
+                       section['x_gulp_cell_b'][-1],
+                       section['x_gulp_cell_c'][-1],
+                       section['x_gulp_cell_alpha'][-1],
+                       section['x_gulp_cell_beta'][-1],
+                       section['x_gulp_cell_gamma'][-1]]
+
+            num = get_spacegroup_number(self.spacegroup)
+
+            basis_atoms = Atoms(ase_symbols, tags=tags,
+                                scaled_positions=positions)
+
+            unique_labels = set(gulp_labels)
+            thelabels = np.array(gulp_labels)
+
+            constituents = []
+            def build_atoms(label):
+                b = basis_atoms[thelabels == label]
+                atoms = crystal(b,
+                                basis=b,
+                                spacegroup=num,
+                                cellpar=cellpar,
+                                onduplicates='error')
+                constituents.append(atoms)
+
+            # Avoid duplicates when constructing space group atoms *grumble*
+            # We want core and shell first
+            for sym in 'cs':
+                if sym in unique_labels:
+                    unique_labels.remove(sym)
+                    build_atoms(sym)
+            for sym in sorted(unique_labels):
+                build_atoms(sym)
+
+            atoms = constituents[0]
+            for other in constituents[1:]:
+                atoms += other
+        else:
             cell3d = np.identity(3)
             if self.npbc > 0:
                 cell = self.current_raw_cell
@@ -266,73 +328,13 @@ class GulpContext(object):
 
             # use Atoms to get scaled positions/cell right:
             atoms = Atoms([0] * len(positions), cell=cell3d,
-                          scaled_positions=positions, pbc=pbc)
+                          scaled_positions=positions, pbc=pbc,
+                          tags=tags)
 
-            atom_positions = atoms.positions
-
-            atom_labels = []
-            for sym, label in zip(symbols, gulp_labels):
-                if label != 'c':
-                    sym = '%s-%s' % (sym, label)
-                atom_labels.append(sym)
-
-        else:
-            # group may be none ---- no spacegroup
-            cellpar = [section['x_gulp_cell_a'],
-                       section['x_gulp_cell_b'],
-                       section['x_gulp_cell_c'],
-                       section['x_gulp_cell_alpha'],
-                       section['x_gulp_cell_beta'],
-                       section['x_gulp_cell_gamma']]
-            for x in cellpar:
-                assert len(x) == 1, cellpar
-            num = get_spacegroup_number(self.spacegroup)
-
-            atoms_by_label = {}
-            for i, (s, l, p) in enumerate(zip(symbols, gulp_labels, positions)):
-                atoms_by_label.setdefault(l, []).append([i, s, p])
-
-                labelpattern = re.compile(r'([A-Z][a-z]?)(\d*)')
-            atom_labels = []
-            atom_positions = []
-            for label in atoms_by_label:
-                data = atoms_by_label[label]
-
-                sym = []
-                tags = []
-                for d in data:
-                    m = labelpattern.match(d[1])
-                    assert m is not None, d[1]
-                    sym0, num0 = m.groups()
-                    sym.append(sym0)
-                    tags.append(int(num0) if num0 else 0)
-                #sym = [d[1].strip('0123456789') for d in data]
-                spos = [d[2] for d in data]
-
-                basis_atoms = Atoms(sym, tags=tags, scaled_positions=spos)
-                atoms = crystal(basis_atoms,#sym,
-                                basis=spos,
-                                spacegroup=num,
-                                cellpar=[x[0] for x in cellpar])
-                # Grrr, we can't easily reconstruct the exact labels.  Sod that!
-                symbols = atoms.get_chemical_symbols()
-                tags = atoms.get_tags()
-                for sym, tag in zip(symbols, tags):
-                    tokens = [sym]
-                    if tag != 0:
-                        tokens.append('%d' % tag)
-                    if label != 'c':
-                        tokens.append('-%s' % label)
-                    atom_labels.append(''.join(tokens))
-
-                atom_positions.extend(atoms.positions)
-                # Also, the ordering may be messed up.
-                # This is torturous.
-            atom_positions = np.array(atom_positions)
+        atom_labels = [tag2type[tag] for tag in atoms.get_tags()]
 
         backend.addArrayValues('atom_labels', np.asarray(atom_labels))
-        backend.addArrayValues('configuration_periodic_dimensions',
-                               np.array(pbc))
+        backend.addArrayValues('configuration_periodic_dimensions', pbc)
         backend.addValue('number_of_atoms', len(atom_labels))
         # The cell can be infinite in some directions.
         # In that case the cell value will just be one (it has to have some value!!)
@@ -535,7 +537,13 @@ def get_optimise_sm():
                       SM(r'\s*alpha\s*(?P<x_gulp_cell_alpha>\S+)\s+Degrees', name='alpha'),
                       SM(r'\s*beta\s*(?P<x_gulp_cell_beta>\S+)\s+Degrees', name='beta'),
                       SM(r'\s*gamma\s*(?P<x_gulp_cell_gamma>\S+)\s+Degrees', name='gamma'),
-                  ])
+                  ]),
+               SM(r'\s*Non-primitive lattice parameters :',
+                  name='nonprim',
+                  subMatchers=[
+                      SM(r'\s*a\s*=\s*(?P<x_gulp_cell_a>\S+)\s*b\s*=\s*(?P<x_gulp_cell_b>\S+)\s*c\s*=\s*(?P<x_gulp_cell_c>\S+)'),
+                      SM(r'\s*alpha\s*=\s*(?P<x_gulp_cell_alpha>\S+)\s*beta\s*=\s*(?P<x_gulp_cell_beta>\S+)\s*gamma\s*=\s*(?P<x_gulp_cell_gamma>\S+)'),
+                  ]),
            ])
     return m
 
