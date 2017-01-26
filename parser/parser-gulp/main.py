@@ -708,7 +708,8 @@ infoFileDescription = SM(
     name='root',
     weak=True,
     startReStr='',
-    fixedStartValues={'program_name': 'gulp'},
+    fixedStartValues={'program_name': 'gulp',
+                      'program_basis_set_type': 'MM'},
     sections=['section_run'],
     subMatchers=[
         get_header_sm(),
