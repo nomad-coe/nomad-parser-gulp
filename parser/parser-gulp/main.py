@@ -301,6 +301,7 @@ class GulpContext(object):
             num = get_spacegroup_number(self.spacegroup)
 
             basis_atoms = Atoms(ase_symbols, tags=tags,
+                                cell=np.eye(3),
                                 scaled_positions=positions)
 
             unique_labels = set(gulp_labels)
