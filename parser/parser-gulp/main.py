@@ -131,14 +131,14 @@ parser_info = {'name': 'gulp-parser', 'version': '1.0'}
 #    'section_method',
 #    'section_frame_sequence',
 #    'section_sampling_method',
-#OK    'single_configuration_to_calculation_method_ref',
+#OK    'single_configuration_calculation_to_method_ref',
 #OK    'single_configuration_calculation_to_system_ref',
-#    'atom_forces_raw',
-#    'frame_sequence_local_frames_ref',
-#    'frame_sequence_to_sampling_ref',
+#    'atom_forces',
+#    'frame_sequence_to_frames_ref',
+#    'frame_sequence_to_sampling_method_ref',
 
 #DFT-only
-#    'XC_functional_name',
+#    'xc_functional_name',
 #    'smearing_kind',
 #    'smearing_width'
 #    'eigenvalues_kpoints',
@@ -150,7 +150,7 @@ parser_info = {'name': 'gulp-parser', 'version': '1.0'}
 #    'band_segm_labels',
 #    'dos_energies',
 #    'dos_values',
-#    'section_XC_functionals',
+#    'section_xc_functionals',
 #    'program_basis_set_type',
 
 """File structure.  Example 4
@@ -375,7 +375,7 @@ class GulpContext(object):
 
     def onClose_section_single_configuration_calculation(self, backend,
                                                          gindex, section):
-        backend.addValue('single_configuration_to_calculation_method_ref',
+        backend.addValue('single_configuration_calculation_to_method_ref',
                          self.section_refs['method'])
         backend.addValue('single_configuration_calculation_to_system_ref',
                          self.section_refs['system'])
