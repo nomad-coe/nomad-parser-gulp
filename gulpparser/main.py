@@ -109,8 +109,7 @@ def get_gulp_energy_sm():
               subMatchers=sms)
 
 import nomad_meta_info
-# metaInfoPath = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(nomad_meta_info.__file__)), "gulp.nomadmetainfo.json"))
-metaInfoPath = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "nomad_meta_info/gulp.nomadmetainfo.json"))
+metaInfoPath = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(nomad_meta_info.__file__)), "gulp.nomadmetainfo.json"))
 metaInfoEnv, warnings = loadJsonFile(filePath = metaInfoPath, dependencyLoader = None, extraArgsHandling = InfoKindEl.ADD_EXTRA_ARGS, uri = None)
 parser_info = {'name': 'gulp-parser', 'version': '1.0'}
 
