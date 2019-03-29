@@ -231,10 +231,11 @@ class GulpContext(object):
             self.use_spacegroup = False
 
     def onClose_section_method(self, backend, gindex, section):
-        species = self.data['species']
-        sym, types, charges = species.T
-        charges = convert_unit(charges.astype(float), 'e')
-        backend.addArrayValues('x_gulp_species_charge', charges)
+        # species = self.data['species']
+        # sym, types, charges = species.T
+        # charges = convert_unit(charges.astype(float), 'e')
+        # backend.addArrayValues('x_gulp_species_charge', charges)
+        pass
 
     def onClose_section_system(self, backend, gindex, section):
         data = self.data
@@ -380,7 +381,7 @@ class GulpContext(object):
 
     # multi_sm is a copy from Siesta
     def multi_sm(self, name, startpattern, linepattern, endmatcher=None,
-                 conflict='fail',  # 'fail', 'keep', 'overwrite'
+                 conflict='overwrite',  # 'fail', 'keep', 'overwrite'
                  *args, **kwargs):
 
         pat = re.compile(linepattern)  # XXX how to get compiled pattern?
