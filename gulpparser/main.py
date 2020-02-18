@@ -725,7 +725,7 @@ infoFileDescription = SM(
     weak=True,
     startReStr='',
     fixedStartValues={'program_name': 'gulp',
-                      'program_basis_set_type': 'MM'},
+                      'program_basis_set_type': 'unavailable'},
     sections=['section_run'],
     subMatchers=[
         get_header_sm(),
