@@ -108,11 +108,6 @@ def get_gulp_energy_sm():
               subFlags=SM.SubFlags.Unordered,
               subMatchers=sms)
 
-import nomad_meta_info
-metaInfoPath = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(nomad_meta_info.__file__)), "gulp.nomadmetainfo.json"))
-metaInfoEnv, warnings = loadJsonFile(filePath = metaInfoPath, dependencyLoader = None, extraArgsHandling = InfoKindEl.ADD_EXTRA_ARGS, uri = None)
-parser_info = {'name': 'gulp-parser', 'version': '1.0'}
-
 #TODO
 #----
 
@@ -735,7 +730,7 @@ infoFileDescription = SM(
         get_optimise_sm(),  # note British spelling
         get_md_sm(),
         SM(r'x^',
-           name='impossible') # 'Parse' the whole file
+           name='impossible')  # 'Parse' the whole file
     ])
 
 
@@ -748,25 +743,14 @@ class GULPParser():
         from unittest.mock import patch
         logging.info('GULP parser started')
         logging.getLogger('nomadcore').setLevel(logging.WARNING)
-        backend = self.backend_factory(metaInfoEnv)
+        backend = self.backend_factory("gulp.nomadmetainfo.json")
         with patch.object(sys, 'argv', ['<exe>', '--uri', 'nmd://uri', mainfile]):
             mainFunction(
                 infoFileDescription,
-                metaInfoEnv,
-                parser_info,
+                None,
+                {'name': 'gulp-parser', 'version': '1.0'},
                 cachingLevelForMetaName={},
                 superContext=GulpContext(),
                 superBackend=backend)
 
         return backend
-
-def main(**kwargs):
-    mainFunction(mainFileDescription=infoFileDescription,
-                 metaInfoEnv=metaInfoEnv,
-                 parserInfo=parser_info,
-                 cachingLevelForMetaName={},
-                 superContext=context,
-                 **kwargs)
-
-if __name__ == '__main__':
-    main()
