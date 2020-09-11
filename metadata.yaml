@@ -1,0 +1,7 @@
+codeLabel: GULP
+codeLabelStyle: All in capitals
+codeUrl: http://gulp.curtin.edu.au/gulp/
+parserDirName: dependencies/parsers/gulp/
+parserGitUrl: https://gitlab.mpcdf.mpg.de/nomad-lab/parser-gulp
+parserSpecific: ''
+tableOfFiles: ''
