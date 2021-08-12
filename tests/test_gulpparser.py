@@ -36,16 +36,16 @@ def test_basic(parser):
 
     parser.parse('tests/data/example1.got', archive, None)
 
-    sec_run = archive.section_run[0]
-    assert sec_run.program_version == '4.1.0'
+    sec_run = archive.run[0]
+    assert sec_run.program.version == '4.1.0'
 
-    sec_system = archive.section_run[0].section_system[0]
-    assert sec_system.lattice_vectors[2][1].magnitude == approx(-2.782858e-10)
-    assert sec_system.atom_labels[3] == 'O'
-    assert sec_system.atom_positions[1][1].magnitude == approx(-2.8417015e-11)
+    sec_system = archive.run[0].system[0]
+    assert sec_system.atoms.lattice_vectors[2][1].magnitude == approx(-2.782858e-10)
+    assert sec_system.atoms.labels[3] == 'O'
+    assert sec_system.atoms.positions[1][1].magnitude == approx(-2.8417015e-11)
 
-    sec_sccs = sec_run.section_single_configuration_calculation[0]
-    assert sec_sccs.energy_total.magnitude == approx(-5.04963266e-17)
+    sec_sccs = sec_run.calculation[0]
+    assert sec_sccs.energy.total.value.magnitude == approx(-5.04963266e-17)
 
 
 def test_1(parser):
@@ -53,6 +53,6 @@ def test_1(parser):
 
     parser.parse('tests/data/example18.got', archive, None)
 
-    sec_sccs = archive.section_run[0].section_single_configuration_calculation
+    sec_sccs = archive.run[0].calculation
     assert len(sec_sccs) == 4
-    assert sec_sccs[2].energy_total.magnitude == approx(-2.10631951e-16)
+    assert sec_sccs[2].energy.total.value.magnitude == approx(-2.10631951e-16)
