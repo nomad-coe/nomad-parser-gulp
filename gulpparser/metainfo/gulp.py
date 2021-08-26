@@ -25,6 +25,9 @@ from nomad.metainfo import (  # pylint: disable=unused-import
 from nomad.datamodel.metainfo import run
 
 
+m_package = Package()
+
+
 class x_gulp_section_main_keyword(MSection):
     '''
     Section for GULP calculation mode input variable

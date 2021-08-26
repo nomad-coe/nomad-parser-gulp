@@ -16,4 +16,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-import gulpparser.metainfo.gulp
+from nomad.metainfo import Environment
+
+from . import gulp
+
+m_env = Environment()
+m_env.m_add_sub_section(Environment.packages, gulp.m_package)
